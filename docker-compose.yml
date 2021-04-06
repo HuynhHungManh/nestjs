@@ -13,7 +13,6 @@ services:
           - database_server
         ports:
             - 3000:3000
-            - 9229:9229
         networks:
             - nesjs-network
         volumes:

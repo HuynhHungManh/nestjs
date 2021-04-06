@@ -1,19 +1,91 @@
-import { NestFactory } from '@nestjs/core';
+import {
+    ClassSerializerInterceptor,
+    HttpStatus,
+    UnprocessableEntityException,
+    ValidationPipe,
+} from '@nestjs/common';
+import { NestFactory, Reflector } from '@nestjs/core';
+// import { Transport } from '@nestjs/microservices';
+import {
+    ExpressAdapter,
+    NestExpressApplication,
+} from '@nestjs/platform-express';
+// import compression from 'compression';
+// import RateLimit from 'express-rate-limit';
+// import helmet from 'helmet';
+// import morgan from 'morgan';
+// import {
+//     initializeTransactionalContext,
+//     patchTypeORMRepositoryWithBaseRepository,
+// } from 'typeorm-transactional-cls-hooked';
+
 import { AppModule } from './app.module';
-import { ValidationPipe } from '@nestjs/common';
+import { HttpExceptionFilter } from './filters/bad-request.filter';
+import { QueryFailedFilter } from './filters/query-failed.filter';
+import { setupSwagger } from './setup-swagger';
+import { ConfigService } from './shared/services/config.service';
+import { SharedModule } from './shared/shared.module';
 
 async function bootstrap() {
-  const app = await NestFactory.create(AppModule);
-  app.useGlobalPipes(
-    new ValidationPipe({
-      whitelist: true,
-      transform: true,
-      forbidNonWhitelisted: true,
-      transformOptions: {
-        enableImplicitConversion: true,
-      },
-    }),
-  );
-  await app.listen(3000);
+    // initializeTransactionalContext();
+    // patchTypeORMRepositoryWithBaseRepository();
+    const app = await NestFactory.create<NestExpressApplication>(
+        AppModule,
+        new ExpressAdapter(),
+        { cors: true },
+    );
+    app.enable('trust proxy'); // only if you're behind a reverse proxy (Heroku, Bluemix, AWS ELB, Nginx, etc)
+    // app.use(helmet());
+    // app.use(
+    //     RateLimit({
+    //         windowMs: 15 * 60 * 1000, // 15 minutes
+    //         max: 100, // limit each IP to 100 requests per windowMs
+    //     }),
+    // );
+    // app.use(compression());
+    // app.use(morgan('combined'));
+
+    const reflector = app.get(Reflector);
+
+    app.useGlobalFilters(
+        new HttpExceptionFilter(reflector),
+        new QueryFailedFilter(reflector),
+    );
+
+    app.useGlobalInterceptors(new ClassSerializerInterceptor(reflector));
+
+    app.useGlobalPipes(
+        new ValidationPipe({
+            whitelist: true,
+            errorHttpStatusCode: HttpStatus.UNPROCESSABLE_ENTITY,
+            transform: true,
+            dismissDefaultMessages: true,
+            exceptionFactory: (errors) =>
+                new UnprocessableEntityException(errors),
+        }),
+    );
+
+    const configService = app.select(SharedModule).get(ConfigService);
+
+    // app.connectMicroservice({
+    //     transport: Transport.TCP,
+    //     options: {
+    //         port: configService.getNumber('TRANSPORT_PORT'),
+    //         retryAttempts: 5,
+    //         retryDelay: 3000,
+    //     },
+    // });
+
+    // await app.startAllMicroservicesAsync();
+    //
+    if (['development', 'staging'].includes(configService.nodeEnv)) {
+        setupSwagger(app);
+    }
+    //
+    const port = configService.getNumber('PORT');
+    await app.listen(port);
+
+    console.info(`server running on port ${port}`);
 }
-bootstrap();
+
+void bootstrap();
